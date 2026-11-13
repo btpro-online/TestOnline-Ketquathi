@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TestOnline-Exam</title>
+<title>TestOnline</title>
 <style>
 :root{
   --bg:#f3f6fa; --card:#fff; --ink:#263242; --muted:#6e7a8a; --line:#e2e7ee; --brand:#2f6da8; --brand-ink:#fff;
@@ -58,7 +58,7 @@ details summary{cursor:pointer;font-weight:600}
 </head>
 <body>
 <header>
-  <h1>B&T Pro Online</h1>
+  <h1>Test-Online</h1>
   <p>B&amp;T Pro AI – thống kê và bảng điểm học sinh</p>
 </header>
 <main>
@@ -67,7 +67,7 @@ details summary{cursor:pointer;font-weight:600}
     <div class="grid cfg" style="margin-top:8px">
       <div><label for="url">Link Apps Script (…/exec)</label><input id="url" type="text" placeholder="https://script.google.com/macros/s/…/exec"></div>
       <div><label for="tok">Mật khẩu (READ_TOKEN)</label><input id="tok" type="password" autocomplete="off"></div>
-      <div><label for="site">Link trang đề (để hiện tên đề, tuỳ chọn)</label><input id="site" type="text" placeholder="https://tên-dự-án.pages.dev"></div>
+      <div><label for="site">Link trang đề của các lớp (mỗi lớp một dòng, tuỳ chọn – để hiện tên đề)</label><textarea id="site" rows="2" style="width:100%;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;resize:vertical;min-height:44px" placeholder="https://btpro-online-toan10.pages.dev&#10;https://btpro-online-toan12.pages.dev"></textarea></div>
       <button id="go">Tải dữ liệu</button>
     </div>
     <p class="chk" style="margin:8px 0 0"><label class="chk"><input type="checkbox" id="rem" checked> Nhớ trên máy này</label>
@@ -139,15 +139,34 @@ function timeText(t){var d=new Date(t);if(isNaN(d))return String(t||'');var p=fu
 function secText(s){s=Math.round(num(s));return Math.floor(s/60)+' phút '+(s%60)+' giây'}
 function examName(id){return CAT[id]?CAT[id]:id}
 
+// JSONP: nạp bằng thẻ <script> nên không bị chặn CORS (cần Code.gs bản mới có doGet hỗ trợ ?action=report)
+function jsonp(url,tok){
+  return new Promise(function(resolve,reject){
+    var cb='__bt'+Date.now(),s=document.createElement('script'),done=false;
+    var t=setTimeout(function(){fin();reject(new Error('Hết thời gian chờ Apps Script (kiểm tra link /exec, quyền "Bất kỳ ai" và đã Deploy phiên bản mới của Code.gs).'))},60000);
+    function fin(){done=true;clearTimeout(t);try{delete window[cb]}catch(e){window[cb]=undefined}if(s.parentNode)s.parentNode.removeChild(s)}
+    window[cb]=function(d){if(done)return;fin();resolve(d)};
+    s.onerror=function(){if(done)return;fin();reject(new Error('Không kết nối được tới Apps Script. Hãy mở link /exec trong tab mới (phải thấy chữ "sẵn sàng"); kiểm tra quyền truy cập là "Bất kỳ ai" và đã Deploy phiên bản mới của Code.gs.'))};
+    s.src=url+(url.indexOf('?')<0?'?':'&')+'action=report&token='+encodeURIComponent(tok)+'&callback='+cb+'&t='+Date.now();
+    document.head.appendChild(s);
+  });
+}
+
 // ---------------- tải dữ liệu ----------------
 async function load(){
   var url=$('#url').value.trim(),tok=$('#tok').value.trim();
   if(!url||!tok){status('Hãy nhập link Apps Script và mật khẩu.',true);return}
   saveCfg();status('Đang tải dữ liệu…');$('#go').disabled=true;$('#reload').disabled=true;
   try{
-    var res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'report',token:tok,cls:'',exam:''})});
-    var txt=await res.text(),j;
-    try{j=JSON.parse(txt)}catch(e){throw new Error('Máy chủ không trả JSON – kiểm tra link /exec và quyền "Bất kỳ ai".')}
+    var j;
+    try{
+      var res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'report',token:tok,cls:'',exam:''})});
+      var txt=await res.text();
+      try{j=JSON.parse(txt)}catch(e){throw new Error('Máy chủ không trả JSON – kiểm tra link /exec và quyền "Bất kỳ ai".')}
+    }catch(e1){
+      if(/JSON/.test(e1.message)&&!/failed|network|load/i.test(e1.message))throw e1;
+      j=await jsonp(url,tok);      // dự phòng khi fetch bị chặn (CORS, mở từ file://, tiện ích...)
+    }
     if(!j.ok)throw new Error(j.error||'Lỗi không rõ');
     DATA=j;
     await loadCatalog();
@@ -156,14 +175,19 @@ async function load(){
   }catch(e){var m=e.message;if(/failed to fetch|networkerror|load failed/i.test(m))m='Không kết nối được tới Apps Script. Hãy: (1) mở link /exec trong một tab mới – phải thấy chữ "sẵn sàng"; (2) mở file này trực tiếp bằng Chrome/Edge (không mở trong khung xem trước); (3) tắt tiện ích chặn quảng cáo cho trang này; (4) hoặc chép file vào thư mục ONLINE rồi đăng lên Cloudflare và mở từ link của site.';status('Không tải được: '+m,true);$('#conn').open=true}
   finally{$('#go').disabled=false;$('#reload').disabled=false}
 }
+// danh sách link trang đề (mỗi lớp một link; cách nhau bằng xuống dòng, dấu phẩy hoặc khoảng trắng)
+function siteList(){
+  return $('#site').value.split(/[\s,;]+/).map(function(x){return x.trim().replace(/\/+$/,'')}).filter(function(x){return /^https?:\/\//i.test(x)});
+}
 async function loadCatalog(){
   CAT={};CATLIST=[];
-  var site=$('#site').value.trim().replace(/\/+$/,'');
-  var urls=[];if(site)urls.push(site+'/catalog.json');urls.push('catalog.json');
-  for(var i=0;i<urls.length;i++){
-    try{var r=await fetch(urls[i]+'?t='+Date.now());if(!r.ok)continue;var c=await r.json();
-      if(Array.isArray(c)){c.forEach(function(it){CAT[it.id]=it.name+(it.created?' ('+it.created+')':'');CATLIST.push(it)});CATLIST.reverse();return}}catch(e){}
+  var sites=siteList(),got=false;
+  for(var i=0;i<sites.length;i++){
+    try{var r=await fetch(sites[i]+'/catalog.json?t='+Date.now());if(!r.ok)continue;var c=await r.json();
+      if(Array.isArray(c)){got=true;c.forEach(function(it){if(!CAT[it.id])CATLIST.push(it);it.site=sites[i];CAT[it.id]=it.name+(it.created?' ('+it.created+')':'')})}}catch(e){}
   }
+  if(!got){try{var r2=await fetch('catalog.json?t='+Date.now());if(r2.ok){var c2=await r2.json();if(Array.isArray(c2))c2.forEach(function(it){if(!CAT[it.id])CATLIST.push(it);CAT[it.id]=it.name+(it.created?' ('+it.created+')':'')})}}catch(e){}}
+  CATLIST.reverse();
 }
 
 // ---------------- bộ lọc ----------------
@@ -194,8 +218,8 @@ function filtered(){
 // ---------------- hiển thị ----------------
 function render(){
   var rows=filtered(),sc=rows.map(function(r){return num(r.score)});
-  var ex=$('#fexam').value,site=$('#site').value.trim().replace(/\/+$/,'');
-  var it=CATLIST.filter(function(x){return x.id===ex})[0];
+  var ex=$('#fexam').value;
+  var it=CATLIST.filter(function(x){return x.id===ex})[0],site=it&&it.site?it.site:'';
   $('#examlink').innerHTML=(it&&site)?'Link đề: <a href="'+esc(site+'/'+it.file)+'" target="_blank" rel="noopener">'+esc(site+'/'+it.file)+'</a>':'';
   renderKpis(rows,sc);renderHist(sc);renderRank(sc);renderHard();renderTable(rows);renderQStat();
 }
